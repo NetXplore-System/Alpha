@@ -19,9 +19,15 @@ from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from pydantic import BaseModel, EmailStr, Field
+from requests import Session
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import FastAPI, HTTPException, Depends
+import bcrypt
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 
-import backend.database
+import database
+from models import User
 
 load_dotenv()
 
@@ -32,7 +38,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
 UPLOAD_FOLDER = "./uploads/"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-db = backend.database.get_db()
 app = FastAPI()
 
 app.add_middleware(
@@ -107,7 +112,7 @@ async def google_auth(user: OAuthUser):
     """
     Authenticates user using Google OAuth.
     """
-    users_collection = backend.database.get_db().users
+    users_collection = database.get_db().users
     existing_user = await users_collection.find_one({"email": user.email})
 
     if existing_user:
@@ -135,111 +140,111 @@ async def google_auth(user: OAuthUser):
     }
 
 
-from fastapi import Depends, HTTPException
-from sqlalchemy.orm import Session
-from backend.database import get_db
-from backend.models import User  # Import the User model
-
-# ... other imports ...
-
-from fastapi import FastAPI, HTTPException, Depends
-import bcrypt
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-
 app = FastAPI()
 
 
 @app.post("/register")
-async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
+async def register_user(user: UserCreate, db: AsyncSession = Depends(database.get_db)):
     """Registers a new user."""
-    # Check if email already exists
-    stmt = select(User).where(User.email == user.email)
-    result = await db.execute(stmt)
-    existing_user = result.scalars().first()
+    async with db as session:
+        async with session.begin():
+            # Check if email already exists
+            stmt = select(User).where(User.email == user.email)
+            result = await session.execute(stmt)
+            existing_user = result.scalars().first()
 
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Email already exists")
+            if existing_user:
+                raise HTTPException(status_code=400, detail="Email already exists")
 
-    # Hash the password
-    hashed_password = bcrypt.hashpw(user.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+            # Hash the password
+            hashed_password = bcrypt.hashpw(user.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-    # Create and save the new user
-    new_user = User(name=user.name, email=user.email, password=hashed_password)
-    db.add(new_user)
-    await db.commit()  # Use await for async commit
-    await db.refresh(new_user)  # Use await for async refresh
+            # Create and save the new user
+            new_user = User(name=user.name, email=user.email, password=hashed_password)
+            session.add(new_user)
+            await session.commit()
+            await session.refresh(new_user)
 
-    return {"id": new_user.user_id, "name": new_user.name, "email": new_user.email}
+            return {"id": str(new_user.user_id), "name": new_user.name, "email": new_user.email}
 
 
 @app.post("/login")
-async def login_user(user: UserLogin, db: Session = Depends(get_db)):
+async def login_user(user: UserLogin, db: AsyncSession = Depends(database.get_db)):
     """Logs in a user and returns a JWT token."""
-    db_user = db.query(User).filter(User.email == user.email).first()
+    async with db as session:
+        stmt = select(User).where(User.email == user.email)
+        result = await session.execute(stmt)
+        db_user = result.scalars().first()
 
-    if not db_user:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        if not db_user:
+            raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    if not bcrypt.checkpw(user.password.encode("utf-8"), db_user.password.encode("utf-8")):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        if not bcrypt.checkpw(user.password.encode("utf-8"), db_user.password.encode("utf-8")):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    token = create_access_token(data={"user_id": str(db_user.user_id)})
+        token = create_access_token(data={"user_id": str(db_user.user_id)})
 
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "user": {
-            "id": str(db_user.user_id),
-            "name": db_user.name,
-            "email": db_user.email,
-            "avatar": db_user.avatar or "https://cdn-icons-png.flaticon.com/512/64/64572.png",
-        },
-    }
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "user": {
+                "id": str(db_user.user_id),
+                "name": db_user.name,
+                "email": db_user.email,
+                "avatar": db_user.avatar or "https://cdn-icons-png.flaticon.com/512/64/64572.png",
+            },
+        }
 
 
 @app.get("/users")
-async def get_all_users(db: Session = Depends(get_db)):  # Add db: Session = Depends(get_db)
+async def get_all_users(db: AsyncSession = Depends(database.get_db)):
     """Fetches a list of all users."""
-    users = db.query(User).all()  # Use SQLAlchemy ORM
-    return [{"id": str(user.user_id), "name": user.name, "email": user.email} for user in users]
+    async with db as session:
+        result = await session.execute(select(User))
+        users = result.scalars().all()
+        return [{"id": str(user.user_id), "name": user.name, "email": user.email} for user in users]
 
 
 @app.put("/users/{user_id}")
-async def update_user(user_id: str, user_update: UserUpdate,
-                      db: Session = Depends(get_db)):  # Add db: Session = Depends(get_db)
+async def update_user(user_id: str, user_update: UserUpdate, db: AsyncSession = Depends(database.get_db)):
     """Updates a user's details."""
-    user = db.query(User).filter(User.user_id == user_id).first()  # Use SQLAlchemy ORM
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    async with db as session:
+        async with session.begin():
+            user = await session.get(User, user_id)
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
 
-    update_data = user_update.dict(exclude_unset=True)
-    if "password" in update_data:
-        update_data["password"] = bcrypt.hashpw(update_data["password"].encode("utf-8"), bcrypt.gensalt()).decode(
-            "utf-8")
+            update_data = user_update.dict(exclude_unset=True)
+            if "password" in update_data:
+                update_data["password"] = bcrypt.hashpw(update_data["password"].encode("utf-8"), bcrypt.gensalt()).decode(
+                    "utf-8")
 
-    for key, value in update_data.items():
-        setattr(user, key, value)
+            for key, value in update_data.items():
+                setattr(user, key, value)
 
-    db.commit()
-    db.refresh(user)
+            await session.commit()
+            await session.refresh(user)
 
-    return {
-        "id": str(user.user_id),
-        "name": user.name,
-        "email": user.email,
-        "avatar": user.avatar or "https://cdn-icons-png.flaticon.com/512/64/64572.png"
-    }
+            return {
+                "id": str(user.user_id),
+                "name": user.name,
+                "email": user.email,
+                "avatar": user.avatar or "https://cdn-icons-png.flaticon.com/512/64/64572.png"
+            }
 
 
 @app.delete("/users/{user_id}")
-async def delete_user(user_id: str, db: Session = Depends(get_db)):  # Add db: Session = Depends(get_db)
-    user = db.query(User).filter(User.user_id == user_id).first()  # Use SQLAlchemy ORM
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    db.delete(user)
-    db.commit()
-    return {"message": "User deleted successfully"}
+async def delete_user(user_id: str, db: AsyncSession = Depends(database.get_db)):
+    """Deletes a user."""
+    async with db as session:
+        async with session.begin():
+            user = await session.get(User, user_id)
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+            await session.delete(user)
+            await session.commit()
+            return {"message": "User deleted successfully"}
+
 
 
 @app.post("/upload-avatar")
@@ -260,14 +265,14 @@ async def upload_avatar(file: UploadFile = File(...), token: str = Depends(oauth
         avatar_file.write(await file.read())
 
     avatar_url = f"/static/avatars/{avatar_filename}"
-    users_collection = db["users"]
+    users_collection = await database.get_db().get_collection("users")
     await users_collection.update_one({"user_id": current_user["user_id"]}, {"$set": {"avatar": avatar_url}})
     return {"avatarUrl": avatar_url}
 
 
 @app.delete("/users/{user_id}")
 async def delete_user(user_id: str):
-    users_collection = db["users"]
+    users_collection = database.get_db()["users"]
 
     result = await users_collection.delete_one({"user_id": user_id})
 
@@ -825,6 +830,7 @@ async def save_form(data: dict):
     Save form data into the Research_user collection in MongoDB.
     """
     try:
+        db = database.get_db()
         research_collection = db["Research_user"]
 
         form_data = {
