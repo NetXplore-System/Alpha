@@ -13,10 +13,9 @@ import psycopg2
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Now import the modules using ABSOLUTE paths
-from backend.database import Base, get_db
-from backend.main import app
-from backend.models import User
-
+from database import Base, get_db
+from main import app
+from models import User
 # Test database setup
 SQLALCHEMY_TEST_DATABASE_URL = "postgresql://postgres:sisma@localhost/test_netxplore"
 engine = create_engine(SQLALCHEMY_TEST_DATABASE_URL)

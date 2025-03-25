@@ -1,5 +1,5 @@
 import pytest
-from backend.models import User
+from models import User
 import bcrypt
 from sqlalchemy.orm import Session
 import uuid
