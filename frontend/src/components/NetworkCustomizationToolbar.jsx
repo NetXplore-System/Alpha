@@ -1,10 +1,21 @@
 import React, { useState, useEffect } from "react";
-import { Form, Card, Row, Col, Button, Table } from "react-bootstrap";
+import {
+  Form,
+  Card,
+  Row,
+  Col,
+  Button,
+  Table,
+  InputGroup,
+} from "react-bootstrap";
 import {
   Palette,
   CircleFill,
   PeopleFill,
   PersonBadge,
+  PencilSquare,
+  CheckSquare,
+  XSquare,
 } from "react-bootstrap-icons";
 import "./NetworkCustomizationToolbar.css";
 
@@ -40,8 +51,8 @@ const NetworkCustomizationToolbar = ({
   );
   const [nodeSizes, setNodeSizes] = useState(
     initialSettings.nodeSizes || {
-      min: 10,
-      max: 30,
+      min: 15,
+      max: 40,
     }
   );
   const [colorScheme, setColorScheme] = useState(
@@ -54,6 +65,9 @@ const NetworkCustomizationToolbar = ({
   const [importantNodesThreshold, setImportantNodesThreshold] = useState(
     initialSettings.importantNodesThreshold || 0.5
   );
+  const [communityNames, setCommunityNames] = useState({});
+  const [editingCommunityId, setEditingCommunityId] = useState(null);
+  const [tempCommunityName, setTempCommunityName] = useState("");
 
   const nodeOptions =
     networkData?.nodes?.map((node) => ({
@@ -106,15 +120,20 @@ const NetworkCustomizationToolbar = ({
   useEffect(() => {
     if (communities && communities.length) {
       const colors = {};
+      const names = {};
       const scheme = colorSchemes[colorScheme] || colorSchemes.default;
 
       communities.forEach((community, index) => {
         colors[community.id] = scheme[index % scheme.length];
+        names[community.id] =
+          initialSettings.communityNames?.[community.id] ||
+          `Community ${community.id}`;
       });
 
       setCommunityColors(colors);
+      setCommunityNames(names);
     }
-  }, [communities, colorScheme]);
+  }, [communities, colorScheme, initialSettings.communityNames]);
 
   const handleColorSchemeChange = (scheme) => {
     setColorScheme(scheme);
@@ -139,22 +158,116 @@ const NetworkCustomizationToolbar = ({
     }
   };
 
+  const handleApplyCommunityColors = () => {
+    const updatedSettings = {
+      colorBy,
+      sizeBy,
+      highlightUsers,
+      highlightCommunities,
+      customColors,
+      nodeSizes,
+      colorScheme,
+      communityColors,
+      communityNames,
+      showImportantNodes,
+      importantNodesThreshold,
+    };
+
+    console.log("Applying community colors:", communityColors);
+    onApplyCustomization(updatedSettings);
+  };
+
   const handleToggleCommunity = (communityId) => {
     const id =
       typeof communityId === "string" ? parseInt(communityId, 10) : communityId;
 
-    if (highlightCommunities.includes(id)) {
-      setHighlightCommunities(highlightCommunities.filter((cid) => cid !== id));
-    } else {
-      setHighlightCommunities([...highlightCommunities, id]);
-    }
+    const newHighlightCommunities = highlightCommunities.includes(id)
+      ? highlightCommunities.filter((cid) => cid !== id)
+      : [...highlightCommunities, id];
+
+    setHighlightCommunities(newHighlightCommunities);
+    setColorBy("community");
+
+    const updatedSettings = {
+      colorBy: "community",
+      sizeBy,
+      highlightUsers,
+      highlightCommunities: newHighlightCommunities,
+      customColors,
+      nodeSizes,
+      colorScheme,
+      communityColors,
+      communityNames,
+      showImportantNodes,
+      importantNodesThreshold,
+    };
+
+    console.log(
+      "Applying updated settings (with colorBy: 'community'):",
+      updatedSettings
+    );
+    onApplyCustomization(updatedSettings);
   };
 
   const handleCommunityColorChange = (communityId, color) => {
-    setCommunityColors({
+    console.log(`Changing color for community ${communityId} to ${color}`);
+
+    const updatedCommunityColors = {
       ...communityColors,
       [communityId]: color,
-    });
+    };
+
+    setCommunityColors(updatedCommunityColors);
+
+    const updatedSettings = {
+      colorBy,
+      sizeBy,
+      highlightUsers,
+      highlightCommunities,
+      customColors,
+      nodeSizes,
+      colorScheme,
+      communityColors: updatedCommunityColors,
+      communityNames,
+      showImportantNodes,
+      importantNodesThreshold,
+    };
+
+    console.log("Applying color change immediately:", updatedSettings);
+    onApplyCustomization(updatedSettings);
+  };
+
+  const handleEditCommunityName = (communityId) => {
+    setEditingCommunityId(communityId);
+    setTempCommunityName(
+      communityNames[communityId] || `Community ${communityId}`
+    );
+  };
+
+  const handleSaveCommunityName = (communityId) => {
+    if (tempCommunityName.trim()) {
+      const updatedCommunityNames = {
+        ...communityNames,
+        [communityId]: tempCommunityName.trim(),
+      };
+
+      setCommunityNames(updatedCommunityNames);
+
+      const updatedSettings = {
+        ...initialSettings,
+        communityNames: updatedCommunityNames,
+      };
+
+      onApplyCustomization(updatedSettings);
+    }
+
+    setEditingCommunityId(null);
+    setTempCommunityName("");
+  };
+
+  const handleCancelEditName = () => {
+    setEditingCommunityId(null);
+    setTempCommunityName("");
   };
 
   const handleNodeSizeChange = (type, value) => {
@@ -181,11 +294,13 @@ const NetworkCustomizationToolbar = ({
       nodeSizes,
       colorScheme,
       communityColors,
+      communityNames,
       showImportantNodes,
       importantNodesThreshold,
     };
 
-    console.log("Applying customization with settings:", settings);
+    console.log("Apply button clicked. Settings:", settings);
+    console.log("Highlighted communities:", highlightCommunities);
     onApplyCustomization(settings);
   };
 
@@ -372,7 +487,7 @@ const NetworkCustomizationToolbar = ({
                 <Card className="community-card p-2">
                   <h6 className="d-flex align-items-center">
                     <PeopleFill size={16} className="me-2" />
-                    Community Color Customization:
+                    Community Customization:
                     <span className="badge bg-primary ms-2">
                       {communities.length} communities
                     </span>
@@ -391,7 +506,53 @@ const NetworkCustomizationToolbar = ({
                       <tbody>
                         {communities.map((community, index) => (
                           <tr key={community.id}>
-                            <td>Community {community.id}</td>
+                            <td>
+                              {editingCommunityId === community.id ? (
+                                <InputGroup>
+                                  <Form.Control
+                                    type="text"
+                                    value={tempCommunityName}
+                                    onChange={(e) =>
+                                      setTempCommunityName(e.target.value)
+                                    }
+                                    size="sm"
+                                  />
+                                  <Button
+                                    variant="outline-success"
+                                    size="sm"
+                                    onClick={() =>
+                                      handleSaveCommunityName(community.id)
+                                    }
+                                  >
+                                    <CheckSquare size={16} />
+                                  </Button>
+                                  <Button
+                                    variant="outline-danger"
+                                    size="sm"
+                                    onClick={handleCancelEditName}
+                                  >
+                                    <XSquare size={16} />
+                                  </Button>
+                                </InputGroup>
+                              ) : (
+                                <div className="d-flex align-items-center">
+                                  <span className="me-2">
+                                    {communityNames[community.id] ||
+                                      `Community ${community.id}`}
+                                  </span>
+                                  <Button
+                                    variant="link"
+                                    size="sm"
+                                    className="p-0"
+                                    onClick={() =>
+                                      handleEditCommunityName(community.id)
+                                    }
+                                  >
+                                    <PencilSquare size={14} />
+                                  </Button>
+                                </div>
+                              )}
+                            </td>
                             <td>{community.size}</td>
                             <td>
                               <Form.Control

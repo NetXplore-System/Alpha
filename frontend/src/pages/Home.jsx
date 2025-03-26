@@ -79,9 +79,10 @@ const Home = () => {
   const [nodeToRemove, setNodeToRemove] = useState(null);
   const [showRemoveNodeModal, setShowRemoveNodeModal] = useState(false);
   const [activityFilterEnabled, setActivityFilterEnabled] = useState(false);
-  const [activityThreshold, setActivityThreshold] = useState(2);
+  const [activityThreshold, setActivityThreshold] = useState(2); 
   const forceGraphRef = useRef(null);
   const [networkWasRestored, setNetworkWasRestored] = useState(false);
+  const [shouldFetchCommunities, setShouldFetchCommunities] = useState(false);
   const [showOnlyIntraCommunityLinks, setShowOnlyIntraCommunityLinks] =
     useState(false);
     const [communityMap, setCommunityMap] = useState({});
@@ -92,6 +93,8 @@ const Home = () => {
     sizeBy: "default",
     highlightUsers: [],
     highlightCommunities: [],
+    communityNames: {},
+    communityColors: {},
     customColors: {
       defaultNodeColor: "#050d2d",
       highlightNodeColor: "#00c6c2",
@@ -106,14 +109,48 @@ const Home = () => {
       edgeColor: "rgba(128, 128, 128, 0.6)",
     },
     nodeSizes: {
-      min: 10,
-      max: 30,
+      min: 15,
+      max: 40,
     },
     colorScheme: "default",
     showImportantNodes: false,
     importantNodesThreshold: 0.5,
   });
 
+  const loadCommunityColors = (communities) => {
+    if (!communities || communities.length === 0) {
+      console.log("No communities to set colors for");
+      return;
+    }
+
+    console.log("Setting up colors for", communities.length, "communities");
+
+    const communityColors = {};
+    const communityNames = {};
+
+    communities.forEach((community, index) => {
+      const communityId = community.id;
+      const colorArray = visualizationSettings.customColors.communityColors;
+      communityColors[communityId] = colorArray[index % colorArray.length];
+      communityNames[communityId] = `Community ${communityId}`;
+      console.log(
+        `Community ${communityId} gets color ${communityColors[communityId]}`
+      );
+    });
+
+    const updatedSettings = {
+      ...visualizationSettings,
+      communityColors: communityColors,
+      communityNames: communityNames,
+      colorBy: "community",
+      highlightCommunities: [],
+    };
+
+    setVisualizationSettings(updatedSettings);
+    console.log("Updated visualization settings:", updatedSettings);
+
+    handleNetworkCustomization(updatedSettings);
+  };
   const graphMetrics = [
     "Degree Centrality",
     "Betweenness Centrality",
@@ -147,7 +184,15 @@ const Home = () => {
     if (networkData) {
       calculateNetworkStats();
     }
-  }, [uploadedFile, showMetrics, networkData]);
+    if (
+      shouldFetchCommunities &&
+      networkData &&
+      networkData.nodes?.length > 0
+    ) {
+      fetchCommunityData();
+      setShouldFetchCommunities(false);
+    }
+  }, [shouldFetchCommunities, uploadedFile, showMetrics, networkData]);
 
   const handleFileChange = (event) => {
     const selectedFile = event.target.files[0];
@@ -248,7 +293,7 @@ const Home = () => {
         if (data.nodes && data.links) {
           setNetworkData(data);
           setOriginalNetworkData(data);
-          fetchCommunityData();
+          setShouldFetchCommunities(true);
         } else {
           setMessage("No data returned from server.");
         }
@@ -740,84 +785,62 @@ const Home = () => {
       let nodeSize = settings.nodeSizes.min;
       let nodeColor = settings.customColors.defaultNodeColor;
 
-      if (settings.sizeBy === "messages") {
-        const maxMessages = Math.max(
-          ...customizedNodes.map((n) => n.messages || 0)
-        );
-        const sizeRatio =
-          maxMessages > 0 ? (node.messages || 0) / maxMessages : 0;
-        nodeSize =
+      const sizeByValue = (metric) => {
+        const maxVal = Math.max(...customizedNodes.map((n) => n[metric] || 0));
+        const ratio = maxVal > 0 ? (node[metric] || 0) / maxVal : 0;
+        return (
           settings.nodeSizes.min +
-          sizeRatio * (settings.nodeSizes.max - settings.nodeSizes.min);
-      } else if (settings.sizeBy === "degree") {
-        const maxDegree = Math.max(
-          ...customizedNodes.map((n) => n.degree || 0)
+          ratio * (settings.nodeSizes.max - settings.nodeSizes.min)
         );
-        const sizeRatio = maxDegree > 0 ? (node.degree || 0) / maxDegree : 0;
-        nodeSize =
-          settings.nodeSizes.min +
-          sizeRatio * (settings.nodeSizes.max - settings.nodeSizes.min);
-      } else if (settings.sizeBy === "betweenness") {
-        const maxBetweenness = Math.max(
-          ...customizedNodes.map((n) => n.betweenness || 0)
-        );
-        const sizeRatio =
-          maxBetweenness > 0 ? (node.betweenness || 0) / maxBetweenness : 0;
-        nodeSize =
-          settings.nodeSizes.min +
-          sizeRatio * (settings.nodeSizes.max - settings.nodeSizes.min);
-      } else if (settings.sizeBy === "pagerank") {
-        const maxPageRank = Math.max(
-          ...customizedNodes.map((n) => n.pagerank || 0)
-        );
-        const sizeRatio =
-          maxPageRank > 0 ? (node.pagerank || 0) / maxPageRank : 0;
-        nodeSize =
-          settings.nodeSizes.min +
-          sizeRatio * (settings.nodeSizes.max - settings.nodeSizes.min);
-      }
+      };
+
+      if (settings.sizeBy === "messages") nodeSize = sizeByValue("messages");
+      else if (settings.sizeBy === "degree") nodeSize = sizeByValue("degree");
+      else if (settings.sizeBy === "betweenness")
+        nodeSize = sizeByValue("betweenness");
+      else if (settings.sizeBy === "pagerank")
+        nodeSize = sizeByValue("pagerank");
 
       if (settings.colorBy === "community" && node.community !== undefined) {
-        const communityId = node.community;
-        const communityColors = settings.communityColors || {};
-        const defaultColors = settings.customColors.communityColors;
+        const communityId = parseInt(node.community, 10);
         nodeColor =
-          communityColors[communityId] ||
-          defaultColors[communityId % defaultColors.length];
+          settings.communityColors?.[communityId] ??
+          settings.customColors.communityColors[
+            communityId % settings.customColors.communityColors.length
+          ];
       } else if (settings.colorBy === "degree") {
         const maxDegree = Math.max(
           ...customizedNodes.map((n) => n.degree || 0)
         );
         const ratio = maxDegree > 0 ? (node.degree || 0) / maxDegree : 0;
         nodeColor = interpolateColor(
-          "#FFFFFF",
+          "#ffefca",
           settings.customColors.defaultNodeColor,
           ratio
         );
       } else if (settings.colorBy === "betweenness") {
-        const maxBetweenness = Math.max(
+        const maxBtw = Math.max(
           ...customizedNodes.map((n) => n.betweenness || 0)
         );
-        const ratio =
-          maxBetweenness > 0 ? (node.betweenness || 0) / maxBetweenness : 0;
-        nodeColor = interpolateColor("#FFFFFF", "#FF5733", ratio);
+        const ratio = maxBtw > 0 ? (node.betweenness || 0) / maxBtw : 0;
+        nodeColor = interpolateColor("#ffefca", "#FF5733", ratio);
       } else if (settings.colorBy === "pagerank") {
-        const maxPageRank = Math.max(
-          ...customizedNodes.map((n) => n.pagerank || 0)
-        );
-        const ratio = maxPageRank > 0 ? (node.pagerank || 0) / maxPageRank : 0;
-        nodeColor = interpolateColor("#FFFFFF", "#3366CC", ratio);
-      } else if (settings.colorBy === "custom") {
-        if (settings.highlightUsers.includes(node.id)) {
-          nodeColor = settings.customColors.highlightNodeColor;
-        }
+        const maxPR = Math.max(...customizedNodes.map((n) => n.pagerank || 0));
+        const ratio = maxPR > 0 ? (node.pagerank || 0) / maxPR : 0;
+        nodeColor = interpolateColor("#ffefca", "#3366CC", ratio);
+      } else if (
+        settings.colorBy === "custom" &&
+        settings.highlightUsers.includes(node.id)
+      ) {
+        nodeColor = settings.customColors.highlightNodeColor;
       }
 
       if (
-        node.community !== undefined &&
-        settings.highlightCommunities.includes(node.community)
+        settings.highlightCommunities?.includes(parseInt(node.community, 10))
       ) {
-        nodeColor = settings.customColors.highlightNodeColor;
+        node.isHighlightedCommunity = true;
+      } else {
+        node.isHighlightedCommunity = false;
       }
 
       if (settings.showImportantNodes) {
@@ -828,11 +851,11 @@ const Home = () => {
         const maxPageRank = Math.max(
           ...customizedNodes.map((n) => n.pagerank || 0)
         );
-
-        if (
+        const isImportant =
           node.betweenness / maxBetweenness > threshold ||
-          node.pagerank / maxPageRank > threshold
-        ) {
+          node.pagerank / maxPageRank > threshold;
+
+        if (isImportant) {
           nodeColor = settings.customColors.highlightNodeColor;
           nodeSize = Math.max(nodeSize, settings.nodeSizes.max * 0.8);
         }
@@ -1069,19 +1092,74 @@ const Home = () => {
         linkColor={() => linkColor}
         nodeCanvasObject={(node, ctx, globalScale) => {
           const fontSize = 12 / globalScale;
-          const radius = getNodeSize(node);
+
+          const radius =
+            node.size ||
+            (selectedMetric === "PageRank Centrality"
+              ? Math.max(10, node.pagerank * 500)
+              : selectedMetric === "Eigenvector Centrality"
+              ? Math.max(10, node.eigenvector * 60)
+              : selectedMetric === "Closeness Centrality"
+              ? Math.max(10, node.closeness * 50)
+              : selectedMetric === "Betweenness Centrality"
+              ? Math.max(10, node.betweenness * 80)
+              : selectedMetric === "Degree Centrality"
+              ? Math.max(10, node.degree * 80)
+              : 20);
 
           ctx.save();
           ctx.beginPath();
           ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI, false);
 
-          ctx.fillStyle =
-            node.isCommon && highlightCommonNodes ? "#FF5733" : baseColor;
+          const isCommunityHighlighted =
+            node.community !== undefined &&
+            visualizationSettings.highlightCommunities &&
+            visualizationSettings.highlightCommunities.includes(
+              parseInt(node.community, 10)
+            );
+
+          const isNodeHighlighted = node.highlighted && highlightCentralNodes;
+
+          let nodeColor;
+
+          if (node.color) {
+            nodeColor = node.color;
+          } else if (selectedMetric === "PageRank Centrality") {
+            nodeColor = "orange";
+          } else if (selectedMetric === "Eigenvector Centrality") {
+            nodeColor = "purple";
+          } else if (selectedMetric === "Closeness Centrality") {
+            nodeColor = "green";
+          } else if (selectedMetric === "Betweenness Centrality") {
+            nodeColor = "red";
+          } else if (selectedMetric === "Degree Centrality") {
+            nodeColor = "#231d81";
+          } else {
+            nodeColor = "blue";
+          }
+          if (node.isHighlightedCommunity && node.community !== undefined) {
+            const communityName =
+              visualizationSettings.communityNames?.[node.community] ||
+              `Community ${node.community}`;
+            ctx.fillStyle = "#F5BD20";
+            ctx.font = `${fontSize * 0.8}px Sans-Serif`;
+            ctx.fillText(communityName, node.x, node.y + radius + 15);
+          }
+          ctx.fillStyle = nodeColor;
           ctx.fill();
 
-          if (node.isCommon && highlightCommonNodes) {
-            ctx.strokeStyle = "#FFFF00";
-            ctx.lineWidth = 2;
+          if (isCommunityHighlighted) {
+            ctx.strokeStyle =
+              visualizationSettings.customColors.highlightNodeColor;
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            console.log(
+              `Rendering highlighted community node: ${node.id}, community: ${node.community}, color: ${nodeColor}`
+            );
+          } else if (isNodeHighlighted) {
+            ctx.strokeStyle = "#ffff00";
+            ctx.lineWidth = 3;
             ctx.stroke();
           }
 
@@ -1091,60 +1169,42 @@ const Home = () => {
           ctx.fillStyle = "white";
           ctx.fillText(node.id, node.x, node.y);
 
-          const metrics =
-            filteredOriginalData && filteredComparisonData
-              ? comparisonMetrics
-              : isComparisonGraph
-              ? comparisonMetrics
-              : selectedMetric
-              ? [selectedMetric]
-              : [];
-
-          if (metrics.length > 0) {
-            ctx.fillStyle = "black";
-            let yOffset = radius + 5;
-
-            if (metrics.includes("Degree Centrality")) {
-              ctx.fillText(
-                `Deg: ${node.degree || 0}`,
-                node.x,
-                node.y + yOffset
-              );
-              yOffset += fontSize;
-            }
-            if (metrics.includes("Betweenness Centrality")) {
-              ctx.fillText(
-                `Btw: ${node.betweenness?.toFixed(2) || 0}`,
-                node.x,
-                node.y + yOffset
-              );
-              yOffset += fontSize;
-            }
-            if (metrics.includes("Closeness Centrality")) {
-              ctx.fillText(
-                `Cls: ${node.closeness?.toFixed(2) || 0}`,
-                node.x,
-                node.y + yOffset
-              );
-              yOffset += fontSize;
-            }
-            if (metrics.includes("Eigenvector Centrality")) {
-              ctx.fillText(
-                `Eig: ${node.eigenvector?.toFixed(4) || 0}`,
-                node.x,
-                node.y + yOffset
-              );
-              yOffset += fontSize;
-            }
-            if (metrics.includes("PageRank Centrality")) {
-              ctx.fillText(
-                `PR: ${node.pagerank?.toFixed(4) || 0}`,
-                node.x,
-                node.y + yOffset
-              );
-            }
+          if (selectedMetric === "Degree Centrality") {
+            ctx.fillStyle = "#231d81";
+            ctx.fillText(`Deg: ${node.degree}`, node.x, node.y + radius + 5);
           }
-
+          if (selectedMetric === "Betweenness Centrality") {
+            ctx.fillStyle = "DarkRed";
+            ctx.fillText(
+              `Btw: ${node.betweenness?.toFixed(2) || 0}`,
+              node.x,
+              node.y + radius + 5
+            );
+          }
+          if (selectedMetric === "Closeness Centrality") {
+            ctx.fillStyle = "green";
+            ctx.fillText(
+              `Cls: ${node.closeness?.toFixed(2) || 0}`,
+              node.x,
+              node.y + radius + 5
+            );
+          }
+          if (selectedMetric === "Eigenvector Centrality") {
+            ctx.fillStyle = "purple";
+            ctx.fillText(
+              `Eig: ${node.eigenvector?.toFixed(4) || 0}`,
+              node.x,
+              node.y + radius + 5
+            );
+          }
+          if (selectedMetric === "PageRank Centrality") {
+            ctx.fillStyle = "orange";
+            ctx.fillText(
+              `PR: ${node.pagerank?.toFixed(4) || 0}`,
+              node.x,
+              node.y + radius + 5
+            );
+          }
           ctx.restore();
         }}
       />
@@ -2103,7 +2163,7 @@ const Home = () => {
                             const isHighlighted =
                               node.highlighted && highlightCentralNodes;
 
-                            const color = isHighlighted
+                            const nodeColor = isHighlighted
                               ? "#ff9900"
                               : node.color ||
                                 (selectedMetric === "PageRank Centrality"
@@ -2116,12 +2176,22 @@ const Home = () => {
                                   ? "red"
                                   : selectedMetric === "Degree Centrality"
                                   ? "#231d81"
-                                  : node.color || "blue");
+                                  : "blue");
 
-                            ctx.fillStyle = color;
+                            ctx.fillStyle = nodeColor;
                             ctx.fill();
 
-                            if (isHighlighted) {
+                            if (node.isHighlightedCommunity) {
+                              ctx.save();
+                              ctx.shadowColor = "#F5BD20";
+                              ctx.shadowBlur = 15;
+                              ctx.shadowOffsetX = 0;
+                              ctx.shadowOffsetY = 0;
+                              ctx.strokeStyle = "#F5BD20";
+                              ctx.lineWidth = 2;
+                              ctx.stroke();
+                              ctx.restore();
+                            } else if (isHighlighted) {
                               ctx.strokeStyle = "#ffff00";
                               ctx.lineWidth = 3;
                               ctx.stroke();

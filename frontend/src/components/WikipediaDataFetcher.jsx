@@ -8,7 +8,7 @@ const WikipediaDataFetcher = ({ setNetworkData, setWikiUrl }) => {
 
   const handleFetchData = async () => {
     if (!localWikiUrl.trim()) {
-      setMessage("⚠️ Please enter a Wikipedia discussion page URL.");
+      setMessage("Please enter a Wikipedia discussion page URL.");
       return;
     }
 
